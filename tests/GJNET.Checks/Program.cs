@@ -52,16 +52,19 @@ try {
     Check(observations.Single(x=>x.Id=="manual").Links.Contains($"http://127.0.0.1:{port}/"),"configured device TCP port probe and link");
     store.Save(s with {GuestPages=[new("Local guests",["127.0.0.0/8"],["public"])],Integrations=[]});
     var appPort=FreePort(); var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../../"));
-    var start=new ProcessStartInfo("dotnet") {WorkingDirectory=root,UseShellExecute=false,RedirectStandardOutput=true,RedirectStandardError=true};
-    start.ArgumentList.Add(Path.Combine(root,"bin/Debug/net10.0/GJNET.dll")); start.ArgumentList.Add("--urls");start.ArgumentList.Add($"http://127.0.0.1:{appPort}");
+    var publishedIndex=Array.IndexOf(args,"--published");
+    var appDirectory=publishedIndex>=0?Path.GetFullPath(args[publishedIndex+1],root):root;
+    var start=new ProcessStartInfo("dotnet") {WorkingDirectory=appDirectory,UseShellExecute=false,RedirectStandardOutput=true,RedirectStandardError=true};
+    start.ArgumentList.Add(publishedIndex>=0?Path.Combine(appDirectory,"GJNET.dll"):Path.Combine(root,"bin/Debug/net10.0/GJNET.dll")); start.ArgumentList.Add("--urls");start.ArgumentList.Add($"http://127.0.0.1:{appPort}");
     start.Environment["DataPath"]=temp;start.Environment["DashboardPassword"]="test-owner-password";start.Environment["McpToken"]="test-mcp-token";start.Environment["ASPNETCORE_ENVIRONMENT"]="Production";
     process=Process.Start(start)!; var output=new System.Text.StringBuilder(); process.OutputDataReceived+=(_,e)=>{if(e.Data is not null) lock(output) output.AppendLine(e.Data);};process.ErrorDataReceived+=(_,e)=>{if(e.Data is not null) lock(output) output.AppendLine(e.Data);};process.BeginOutputReadLine();process.BeginErrorReadLine();
     using var handler=new HttpClientHandler {AllowAutoRedirect=false,CookieContainer=new CookieContainer()};using var http=new HttpClient(handler){BaseAddress=new Uri($"http://127.0.0.1:{appPort}"),Timeout=TimeSpan.FromSeconds(5)};
     var ready=false;for(var attempt=0;attempt<50;attempt++){try{ready=(await http.GetAsync("/healthz")).IsSuccessStatusCode;if(ready)break;}catch(HttpRequestException){}await Task.Delay(100);}
     if(!ready) throw new Exception("App did not start: "+output);
     Check(ready,"real app health endpoint");
-    Check((await http.GetAsync("/_framework/blazor.web.js")).IsSuccessStatusCode,"Blazor interactive script served in production mode");
     var guest=await http.GetStringAsync("/");Check(guest.Contains("Public link") && !guest.Contains("PRIVATE-NOTE") && !guest.Contains("PRIVATE-LINK"),"guest output excludes private shortcuts and notes");
+    var blazorScript=Regex.Match(guest,"<script src=\"([^\"]*blazor\\.web[^\"]*\\.js)\"").Groups[1].Value;
+    Check(blazorScript.Length>0 && (await http.GetAsync("/"+blazorScript.TrimStart('/'))).IsSuccessStatusCode,"page's actual Blazor script is served in production mode");
     var spoof=new HttpRequestMessage(HttpMethod.Get,"/");spoof.Headers.Add("X-Forwarded-For","10.99.0.1");
     Check((await (await http.SendAsync(spoof)).Content.ReadAsStringAsync()).Contains("Local guests"),"forwarded client IP ignored without explicit proxy trust");
     var privateResponse=await http.GetAsync("/dashboard");var privateHtml=await privateResponse.Content.ReadAsStringAsync();Check(!privateHtml.Contains("PRIVATE-LINK") && (privateResponse.StatusCode==HttpStatusCode.Redirect || privateHtml.Contains("Owner sign in")),"anonymous dashboard isolation");

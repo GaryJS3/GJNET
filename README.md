@@ -58,10 +58,14 @@ Tools: `get_inventory`, `upsert_shortcut` (id, section, name, url, optional note
 ```powershell
 dotnet build -c Release
 dotnet run --project tests/GJNET.Checks
+dotnet publish GJNET.csproj -c Release -o data/publish-check
+dotnet run --project tests/GJNET.Checks -- --published data/publish-check
 git diff --check
 ```
 
 The C# checks cover subnet precedence and isolation, persistence, validation, mocked API responses and failure status, published-port mappings, login/CSRF/private-route isolation, and MCP authorization/mutations. They require no access to your actual network.
+
+The published check follows the script URL emitted by the actual HTML, including fingerprinted names. The Docker build restores after copying Razor components, because .NET 10 omits its framework-asset dependency when no Razor files exist at restore time. The build also requires the published Blazor script to exist before producing an image.
 
 Browser verification also covered login, interactive shortcut creation/editing, and persistence after reload. The container installs `iputils-ping` for unprivileged .NET ICMP probes; actual container networking still needs live verification. Linux ping behavior follows [Microsoft's guidance](https://learn.microsoft.com/en-us/dotnet/core/compatibility/networking/7.0/ping-custom-payload-linux).
 
