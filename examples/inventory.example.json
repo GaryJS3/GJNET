@@ -1,0 +1,14 @@
+{
+  "shortcuts": [{"id":"media","section":"Shared","name":"Media","url":"https://media.example.invalid","notes":"Private owner note"}],
+  "guestPages": [
+    {"name":"Welcome home","subnets":["10.22.0.0/24","10.0.0.0/24"],"shortcutIds":["media"]},
+    {"name":"Guest network","subnets":["10.99.0.0/24"],"shortcutIds":[]}
+  ],
+  "devices": [{"id":"workstation","name":"Workstation","kind":"windows","address":"192.0.2.10","ports":[443],"notes":"Example only; replace with your address"}],
+  "integrations": [
+    {"id":"pve","name":"Proxmox cluster","kind":"proxmox","url":"https://pve.example.invalid:8006","secretEnvironmentVariable":"PROXMOX_TOKEN"},
+    {"id":"docker","name":"Dockhand","kind":"docker","url":"https://dockhand.example.invalid","secretEnvironmentVariable":"DOCKHAND_TOKEN"},
+    {"id":"r730","name":"Dell R730","kind":"redfish","url":"https://idrac.example.invalid","username":"monitor","secretEnvironmentVariable":"IDRAC_PASSWORD"}
+  ],
+  "scanSubnets": []
+}

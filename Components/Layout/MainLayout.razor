@@ -1,0 +1,6 @@
+@inherits LayoutComponentBase
+<div class="shell">
+    <aside><a class="brand" href="/">GJ<span>NET</span><small>NETWORK FIELD NOTES</small></a><nav><a href="/dashboard">Overview <span>01</span></a><a href="/dashboard#shortcuts">Shortcuts <span>02</span></a><a href="/dashboard#inventory">Inventory <span>03</span></a><a href="/settings">Configuration <span>04</span></a></nav><footer>YOUR NETWORK.<br />ONE PLACE TO FIND IT.</footer></aside>
+    <div class="workspace"><header><span class="eyebrow">PRIVATE INFRASTRUCTURE / GJNET</span><AuthorizeView><Authorized><form action="/auth/logout" method="post"><AntiforgeryToken /><button class="quiet">Lock dashboard ↗</button></form></Authorized><NotAuthorized><a href="/login">Owner sign in ↗</a></NotAuthorized></AuthorizeView></header><main>@Body</main></div>
+</div>
+<div id="blazor-error-ui">Connection interrupted. <a href="">Reload</a></div>

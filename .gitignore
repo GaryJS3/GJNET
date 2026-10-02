@@ -1,0 +1,11 @@
+bin/
+obj/
+data/
+.env
+.env.*
+!.env.example
+*.user
+.vs/
+TestResults/
+wwwroot/lib/
+wwwroot/favicon.png

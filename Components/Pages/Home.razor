@@ -1,0 +1,12 @@
+@page "/"
+@inject InventoryStore Store
+<PageTitle>Welcome · GJNET</PageTitle>
+<div class="page-heading"><p class="eyebrow">NETWORK ACCESS</p><h1>@(guest?.Name ?? "Welcome to the network.")</h1><p class="muted">@(guest is null ? "There are no shared links for this connection." : "A few useful places, picked for this network.")</p></div>
+@if (guest is not null) {
+    <div class="shortcut-grid">@foreach(var item in Store.Read().Shortcuts.Where(x=>guest.ShortcutIds.Contains(x.Id))) { <a class="shortcut" href="@item.Url" target="_blank" rel="noopener noreferrer"><span class="eyebrow">@item.Section</span><h2>@item.Name <span>↗</span></h2></a> }</div>
+}
+@code {
+    [CascadingParameter] public HttpContext? HttpContext {get;set;}
+    GuestPage? guest;
+    protected override void OnInitialized() => guest=Store.Guest(HttpContext?.Connection.RemoteIpAddress);
+}

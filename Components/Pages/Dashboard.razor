@@ -1,0 +1,33 @@
+@page "/dashboard"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@implements IDisposable
+@inject InventoryStore Store
+@inject Poller Poller
+<PageTitle>Overview · GJNET</PageTitle>
+<div class="page-heading"><p class="eyebrow">THE CONTROL ROOM</p><h1>Everything has a place.</h1><div class="heading-row"><p class="muted">Hosts, services, and the links that get you there.</p><button @onclick="Refresh" disabled="@busy">@(busy ? "Polling…" : "↻ Refresh status")</button></div></div>
+<div class="stats"><div><span class="eyebrow">OBSERVED</span><strong>@items.Length</strong><small>resources</small></div><div><span class="eyebrow">REACHABLE / RUNNING</span><strong>@items.Count(x=>x.State is "reachable" or "running" or "online" or "OK")</strong><small>at last check</small></div><div><span class="eyebrow">NEEDS A LOOK</span><strong>@items.Count(x=>x.State is "unknown" or "unreachable" or "stopped" or "offline" or "Critical")</strong><small>including unknown status</small></div><div><span class="eyebrow">LAST POLL</span><strong class="time">@(Poller.LastPoll?.ToLocalTime().ToString("HH:mm") ?? "—")</strong><small>@(Poller.LastPoll?.ToString("yyyy-MM-dd HH:mm 'UTC'") ?? "No results yet")</small></div></div>
+<section id="shortcuts"><div class="section-heading"><h2><span>01 /</span> Shortcuts</h2><button @onclick="()=> { editing=null; adding=!adding; }">@(adding ? "Close" : "+ Add shortcut")</button></div>
+@if(adding) { <div class="panel form-grid"><label>Section<input @bind="section" @bind:event="oninput" /></label><label>Name<input @bind="name" @bind:event="oninput" /></label><label>URL<input @bind="url" @bind:event="oninput" placeholder="https://host:port" /></label><label>Notes<input @bind="notes" @bind:event="oninput" /></label><button class="button" @onclick="Add">Save shortcut</button></div> }
+@if(message is not null) { <p class="notice" role="status">@message</p> }
+@if(settings.Shortcuts.Count==0) { <div class="empty"><h3>A home for your useful links.</h3><p>Add a shortcut to a management console, app, or service. Sections are created from the names you enter.</p></div> }
+@foreach(var group in settings.Shortcuts.GroupBy(x=>x.Section)) { <h3 class="group-title">@group.Key</h3><div class="shortcut-grid">@foreach(var link in group) { <div class="shortcut"><a href="@link.Url" target="_blank" rel="noopener noreferrer"><h3>@link.Name <span>↗</span></h3><code>@link.Url</code></a><p>@link.Notes</p><button class="quiet" @onclick="()=>Edit(link)">Edit</button> · <button class="quiet" @onclick="()=>Remove(link.Id)">Remove</button></div> }</div> }
+</section>
+<section id="inventory"><div class="section-heading"><h2><span>02 /</span> Network inventory</h2><input class="search" aria-label="Filter inventory" placeholder="Find a host, service, or address…" @bind="search" @bind:event="oninput" /></div>
+@if(items.Length==0) { <div class="empty"><h3>Your inventory starts here.</h3><p>Add devices, API connections, and discovery subnets in Configuration. Nothing is scanned until you configure it.</p><a href="/settings">Configure your network →</a></div> }
+@foreach(var group in items.Where(Match).GroupBy(x=>x.Kind)) { <h3 class="group-title">@Kind(group.Key) <span class="muted">/ @group.Count()</span></h3><div class="inventory">@foreach(var item in group) { <details><summary><span class="status @(Good(item.State)?"good":"")"></span><strong>@item.Name</strong><code>@item.Address</code><span class="state">@item.State</span><span>＋</span></summary><div class="details"><dl>@foreach(var detail in item.Details) { <dt>@detail.Key</dt><dd>@detail.Value</dd> }<dt>Checked</dt><dd>@item.CheckedAt.ToString("u") @(DateTimeOffset.UtcNow-item.CheckedAt>TimeSpan.FromMinutes(3)?" · stale":"")</dd></dl><div class="port-links">@foreach(var link in item.Links) { <a href="@link" target="_blank" rel="noopener noreferrer">@link ↗</a> }</div></div></details> }</div> }
+</section>
+@code {
+    Settings settings=new([],[],[],[],[]); Observation[] items=[]; string search="",section="Operations",name="",url="",notes=""; string? message; bool adding,busy;
+    string? editing; System.Threading.Timer? timer;
+    protected override void OnInitialized() { Load(); timer=new(_=> { _=InvokeAsync(()=> {Load(); StateHasChanged();}); },null,TimeSpan.FromSeconds(10),TimeSpan.FromSeconds(10)); }
+    public void Dispose()=>timer?.Dispose();
+    void Load() { settings=Store.Read(); items=Poller.Read(); }
+    bool Match(Observation x)=>$"{x.Name} {x.Address} {x.Kind} {string.Join(' ',x.Details.Values)}".Contains(search,StringComparison.OrdinalIgnoreCase);
+    static bool Good(string state)=>state is "reachable" or "running" or "online" or "OK";
+    static string Kind(string kind)=>kind switch {"proxmox"=>"Proxmox hosts","vm"=>"Virtual machines","service"=>"Containers & stacks","docker-host"=>"Docker hosts","hardware"=>"Hardware / iDRAC","discovered"=>"Discovered hosts",_=>kind};
+    async Task Refresh() { busy=true; try { await Poller.Refresh(); Load(); } finally { busy=false; } }
+    void Edit(Shortcut item) { editing=item.Id; section=item.Section; name=item.Name; url=item.Url; notes=item.Notes; adding=true; }
+    void Add() { try { if(string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(section)) throw new ArgumentException("Name and section are required."); Store.Update(s=> {if(editing is not null) s.Shortcuts.RemoveAll(x=>x.Id==editing); s.Shortcuts.Add(new(editing ?? Guid.NewGuid().ToString("N"),section,name,url,notes)); return s;}); Load(); name=url=notes=""; editing=null; adding=false; message="Shortcut saved."; } catch(ArgumentException e) {message=e.Message;} }
+    void Remove(string id) { Store.Update(s=> {s.Shortcuts.RemoveAll(x=>x.Id==id); return s with {GuestPages=s.GuestPages.Select(g=>g with {ShortcutIds=g.ShortcutIds.Where(x=>x!=id).ToArray()}).ToList()};}); Load(); }
+}

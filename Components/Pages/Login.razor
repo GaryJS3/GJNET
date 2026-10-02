@@ -1,0 +1,9 @@
+@page "/login"
+@inject IConfiguration Config
+<PageTitle>Sign in · GJNET</PageTitle>
+<div class="login"><p class="eyebrow">OWNER ACCESS</p><h1>Your network,<br />at a glance.</h1><p class="muted">One password opens your private dashboard.</p>
+@if(string.IsNullOrEmpty(Config["DashboardPassword"])) { <p class="notice">Set DashboardPassword in the host environment to enable sign in.</p> }
+else { <form action="/auth/login" method="post"><AntiforgeryToken /><label for="password">Dashboard password</label><input id="password" type="password" name="password" autocomplete="current-password" required /><button class="button">Open dashboard →</button></form> }
+@if(Failed) { <p role="alert" class="notice">Password not accepted.</p> }
+</div>
+@code { [SupplyParameterFromQuery] public bool Failed { get;set; } }

@@ -1,0 +1,9 @@
+bin
+obj
+.git
+data
+.env
+.env.*
+tests
+wwwroot/lib
+wwwroot/favicon.png
