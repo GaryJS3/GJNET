@@ -4,6 +4,8 @@ using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using GJNET.Services;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -12,9 +14,9 @@ void Check(bool value,string name) { if(!value) throw new Exception("FAILED: "+n
 void Reject(Action action,string name) { try { action(); } catch(ArgumentException) {Check(true,name);return;} throw new Exception("Expected rejection: "+name); }
 int FreePort() { var l=new TcpListener(IPAddress.Loopback,0); l.Start(); var port=((IPEndPoint)l.LocalEndpoint).Port;l.Stop();return port; }
 var temp=Path.Combine(Path.GetTempPath(),"gjnet-checks-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(temp);
-Process? process=null; WebApplication? mock=null;
+Process? process=null; WebApplication? mock=null; WebApplication? tlsMock=null;
 try {
-    var config=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>{{"DataPath",temp},{"PVE","fixture"},{"DOCKER","fixture"},{"IDRAC","fixture"}}).Build();
+    var config=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>{{"DataPath",temp},{"PVE","fixture"},{"DOCKER","fixture"},{"IDRAC","fixture"},{"WRONG","bad"}}).Build();
     var store=new InventoryStore(config);
     var s=new Settings([new("public","Shared","Public link","https://example.invalid","PRIVATE-NOTE"),new("private","Ops","PRIVATE-LINK","https://private.invalid")],[new("wide",["10.0.0.0/8"],["public"]),new("specific",["10.99.0.0/24"],[])],[],[],[]);
     store.Save(s);
@@ -50,6 +52,34 @@ try {
     Check(observations.Single(x=>x.Id=="broken").State=="unknown","upstream failure is unknown, not down");
     Check(poller.LastPoll is not null,"poll completion timestamp");
     Check(observations.Single(x=>x.Id=="manual").Links.Contains($"http://127.0.0.1:{port}/"),"configured device TCP port probe and link");
+
+    // Exercise the actual TLS handshake with an untrusted self-signed server certificate.
+    using var rsa=RSA.Create(2048);
+    var certificateRequest=new CertificateRequest("CN=GJNET-TLS-fixture",rsa,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
+    var alternativeNames=new SubjectAlternativeNameBuilder(); alternativeNames.AddIpAddress(IPAddress.Loopback);
+    certificateRequest.CertificateExtensions.Add(alternativeNames.Build());
+    using var generatedCertificate=certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5),DateTimeOffset.UtcNow.AddDays(1));
+    using var certificate=X509CertificateLoader.LoadPkcs12(generatedCertificate.Export(X509ContentType.Pfx),null,X509KeyStorageFlags.Exportable);
+    var tlsPort=FreePort(); var tlsUrl=$"https://127.0.0.1:{tlsPort}/";
+    var tlsBuilder=WebApplication.CreateBuilder(); tlsBuilder.Logging.ClearProviders();
+    tlsBuilder.WebHost.ConfigureKestrel(o=>o.Listen(IPAddress.Loopback,tlsPort,listener=>listener.UseHttps(certificate)));
+    tlsMock=tlsBuilder.Build();
+    tlsMock.MapGet("/api2/json/cluster/resources",(HttpContext c)=>c.Request.Headers.Authorization=="PVEAPIToken=fixture"?Results.Json(new {data=new[]{new {id="node/tls",type="node",node="tls",status="online"}}}):Results.Unauthorized());
+    await tlsMock.StartAsync();
+    var legacyTls=JsonSerializer.Deserialize<Integration>(JsonSerializer.Serialize(new {id="tls-default",name="Default TLS",kind="proxmox",url=tlsUrl,secretEnvironmentVariable="PVE"}),InventoryStore.Json)!;
+    Check(!legacyTls.ValidateTlsCertificate,"existing integration JSON defaults certificate checks off");
+    store.Save(s with {Devices=[],Integrations=[legacyTls,legacyTls with {Id="tls-strict",ValidateTlsCertificate=true},legacyTls with {Id="tls-missing",SecretEnvironmentVariable="MISSING_CREDENTIAL"},legacyTls with {Id="tls-auth",SecretEnvironmentVariable="WRONG"}]});
+    await poller.Refresh(); var tlsResults=poller.Read();
+    Check(tlsResults.Any(x=>x.Id=="tls-default:node/tls" && x.State=="online"),"default polling accepts self-signed HTTPS certificate");
+    Check(tlsResults.Single(x=>x.Id=="tls-strict").Details["error"].Contains("TLS"),"strict opt-in rejects untrusted HTTPS certificate");
+    Check(tlsResults.Single(x=>x.Id=="tls-missing").Details["error"].Contains("MISSING_CREDENTIAL"),"missing credential identifies its environment variable");
+    Check(tlsResults.Single(x=>x.Id=="tls-auth").Details["error"].Contains("HTTP 401"),"authentication failure identifies HTTP status");
+    Check(new InventoryStore(config).Read().Integrations.Single(x=>x.Id=="tls-strict").ValidateTlsCertificate,"strict certificate flag survives persistence");
+    using(var ordinaryClient=new HttpClient()) {
+        var rejected=false; try { await ordinaryClient.GetAsync(tlsUrl+"api2/json/cluster/resources"); } catch(HttpRequestException) {rejected=true;}
+        Check(rejected,"certificate bypass remains scoped to the integration handler");
+    }
+    await tlsMock.DisposeAsync(); tlsMock=null;
     store.Save(s with {GuestPages=[new("Local guests",["127.0.0.0/8"],["public"])],Integrations=[]});
     var appPort=FreePort(); var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../../"));
     var publishedIndex=Array.IndexOf(args,"--published");
@@ -89,6 +119,7 @@ try {
 } finally {
     if(process is not null) {if(!process.HasExited){process.Kill(entireProcessTree:true);await process.WaitForExitAsync();}process.Dispose();}
     if(mock is not null) await mock.DisposeAsync();
+    if(tlsMock is not null) await tlsMock.DisposeAsync();
     // Only this unique test-owned directory is eligible for recursive cleanup.
     var resolved=Path.GetFullPath(temp); var allowed=Path.GetFullPath(Path.GetTempPath());
     if(resolved.StartsWith(allowed,StringComparison.OrdinalIgnoreCase) && Path.GetFileName(resolved).StartsWith("gjnet-checks-",StringComparison.Ordinal)) Directory.Delete(resolved,true);

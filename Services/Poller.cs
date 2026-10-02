@@ -34,7 +34,7 @@ public class Poller(InventoryStore store, IConfiguration config, ILogger<Poller>
             foreach (var i in s.Integrations)
             {
                 try { foreach (var item in await PollIntegration(i, token)) results.Add(item); }
-                catch (Exception e) when (e is not OperationCanceledException || !token.IsCancellationRequested) { results.Add(new(i.Id, i.Name, i.Kind, "unknown", i.Url, new() { { "error", e is HttpRequestException h ? $"API request failed ({h.StatusCode?.ToString() ?? "connection/TLS"})" : "API configuration or response could not be read" } }, [i.Url], DateTimeOffset.UtcNow)); }
+                catch (Exception e) when (e is not OperationCanceledException || !token.IsCancellationRequested) { results.Add(new(i.Id, i.Name, i.Kind, "unknown", i.Url, new() { { "error", DescribeFailure(e) } }, [i.Url], DateTimeOffset.UtcNow)); }
             }
             foreach (var subnet in s.ScanSubnets)
             {
@@ -56,9 +56,11 @@ public class Poller(InventoryStore store, IConfiguration config, ILogger<Poller>
     async Task<List<Observation>> PollIntegration(Integration i, CancellationToken t)
     {
         using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        if (!i.ValidateTlsCertificate)
+            handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
         using var http = new HttpClient(handler) { BaseAddress = new Uri(i.Url.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(15) };
         var secret = config[i.SecretEnvironmentVariable];
-        if (!string.IsNullOrWhiteSpace(i.SecretEnvironmentVariable) && string.IsNullOrEmpty(secret)) throw new ArgumentException("Missing credential");
+        if (!string.IsNullOrWhiteSpace(i.SecretEnvironmentVariable) && string.IsNullOrEmpty(secret)) throw new MissingCredentialException(i.SecretEnvironmentVariable);
         if (i.Kind == "proxmox") http.DefaultRequestHeaders.TryAddWithoutValidation("Authorization", "PVEAPIToken=" + secret);
         else if (i.Kind == "redfish") http.DefaultRequestHeaders.Authorization = new("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes(i.Username + ":" + secret)));
         else if (!string.IsNullOrEmpty(secret)) http.DefaultRequestHeaders.Authorization = new("Bearer", secret);
@@ -115,10 +117,27 @@ public class Poller(InventoryStore store, IConfiguration config, ILogger<Poller>
                     }
                     var index = list.FindIndex(x => x.Id == i.Id + ":env:" + envId); list[index] = list[index] with { State = containers.GetArrayLength() > 0 ? "reachable" : "unknown" };
                 }
-                catch (HttpRequestException) { var index = list.FindIndex(x => x.Id == i.Id + ":env:" + envId); list[index] = list[index] with { State = "unknown", Details = new() { { "error", "Container API request failed" } } }; }
+                catch (HttpRequestException e) { var index = list.FindIndex(x => x.Id == i.Id + ":env:" + envId); list[index] = list[index] with { State = "unknown", Details = new() { { "error", DescribeFailure(e) } } }; }
             }
         }
         return list;
     }
     public static string Text(JsonElement e, string key, string fallback = "") => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var value) ? value.ToString() : fallback;
+    sealed class MissingCredentialException(string variable) : Exception
+    {
+        public string Variable { get; } = variable;
+    }
+    static string DescribeFailure(Exception error) => error switch
+    {
+        MissingCredentialException missing => $"Missing credential: set {missing.Variable} in the container environment.",
+        HttpRequestException { StatusCode: HttpStatusCode.Unauthorized } => "API returned HTTP 401: check the configured username, password, or API token.",
+        HttpRequestException { StatusCode: HttpStatusCode.Forbidden } => "API returned HTTP 403: the configured credential lacks permission.",
+        HttpRequestException { StatusCode: not null } http => $"API returned HTTP {(int)http.StatusCode.Value} ({http.StatusCode}).",
+        HttpRequestException { HttpRequestError: HttpRequestError.SecureConnectionError } => "TLS handshake or certificate validation failed. Check the certificate setting and server TLS support.",
+        HttpRequestException { HttpRequestError: HttpRequestError.NameResolutionError } => "Host name could not be resolved.",
+        HttpRequestException { HttpRequestError: HttpRequestError.ConnectionError } => "Could not connect to the configured host and port.",
+        OperationCanceledException => "API request timed out.",
+        JsonException => "API response was not valid JSON.",
+        _ => "API configuration or response could not be read."
+    };
 }

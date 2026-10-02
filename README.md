@@ -26,7 +26,9 @@ dotnet run --no-launch-profile --urls http://127.0.0.1:5080
 
 Open `/login`, then `/settings`. Copy and customize `examples/inventory.example.json` in the configuration editor, or add shortcuts from the dashboard. The initial inventory is empty. Set discovery targets yourself; no networks are scanned by default. Runtime configuration and auth keys are stored in `data/` (ignored by Git).
 
-Credentials are referenced by environment-variable name, never stored in inventory. Supply `PROXMOX_TOKEN` (value `user@realm!token=secret`), `DOCKHAND_TOKEN`, and separate `SERVER2_IDRAC_PASSWORD` / `SERVER3_IDRAC_PASSWORD` values as appropriate. The Docker Compose file forwards both iDRAC credentials into the app container. Use read-only monitoring credentials. TLS validation is always enabled; install trusted certificates rather than bypassing verification.
+Credentials are referenced by environment-variable name, never stored in inventory. Supply `PROXMOX_TOKEN` (value `user@realm!token=secret`), `DOCKHAND_TOKEN`, and separate `SERVER2_IDRAC_PASSWORD` / `SERVER3_IDRAC_PASSWORD` values as appropriate. The Docker Compose file forwards both iDRAC credentials into the app container. Use read-only monitoring credentials.
+
+HTTPS integration polling accepts self-signed certificates by default. Set `"validateTlsCertificate": true` on an individual integration to enforce certificate trust, expiry, and host-name checks. Omitted or false keeps certificate checks off for that integration; HTTPS still encrypts the connection. Existing inventories use the same default automatically. Request failures distinguish missing credentials, HTTP authentication/permission errors, TLS errors, and connectivity failures.
 
 ## Docker / Dockhand Git stack
 

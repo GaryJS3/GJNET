@@ -5,7 +5,7 @@ namespace GJNET.Services;
 public record Shortcut(string Id, string Section, string Name, string Url, string Notes = "");
 public record GuestPage(string Name, string[] Subnets, string[] ShortcutIds);
 public record Device(string Id, string Name, string Kind, string Address, int[] Ports, string Notes = "");
-public record Integration(string Id, string Name, string Kind, string Url, string SecretEnvironmentVariable, string Username = "", string? HostAddress = null, Dictionary<string, string>? HostAddresses = null);
+public record Integration(string Id, string Name, string Kind, string Url, string SecretEnvironmentVariable, string Username = "", string? HostAddress = null, Dictionary<string, string>? HostAddresses = null, bool ValidateTlsCertificate = false);
 public record Settings(List<Shortcut> Shortcuts, List<GuestPage> GuestPages, List<Device> Devices, List<Integration> Integrations, List<string> ScanSubnets);
 public record Observation(string Id, string Name, string Kind, string State, string Address, Dictionary<string, string> Details, List<string> Links, DateTimeOffset CheckedAt);
 public class InventoryStore
