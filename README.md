@@ -26,7 +26,7 @@ dotnet run --no-launch-profile --urls http://127.0.0.1:5080
 
 Open `/login`, then `/settings`. Copy and customize `examples/inventory.example.json` in the configuration editor, or add shortcuts from the dashboard. The initial inventory is empty. Set discovery targets yourself; no networks are scanned by default. Runtime configuration and auth keys are stored in `data/` (ignored by Git).
 
-Credentials are referenced by environment-variable name, never stored in inventory. Supply `PROXMOX_TOKEN` (value `user@realm!token=secret`), `DOCKHAND_TOKEN`, and `IDRAC_PASSWORD` as appropriate. Use read-only monitoring credentials. TLS validation is always enabled; install trusted certificates rather than bypassing verification.
+Credentials are referenced by environment-variable name, never stored in inventory. Supply `PROXMOX_TOKEN` (value `user@realm!token=secret`), `DOCKHAND_TOKEN`, and separate `SERVER2_IDRAC_PASSWORD` / `SERVER3_IDRAC_PASSWORD` values as appropriate. The Docker Compose file forwards both iDRAC credentials into the app container. Use read-only monitoring credentials. TLS validation is always enabled; install trusted certificates rather than bypassing verification.
 
 ## Docker / Dockhand Git stack
 

@@ -11,7 +11,8 @@
         "TrustedProxies": "${GJNET_TRUSTED_PROXIES:-}",
         "PROXMOX_TOKEN": "${PROXMOX_TOKEN:-}",
         "DOCKHAND_TOKEN": "${DOCKHAND_TOKEN:-}",
-        "IDRAC_PASSWORD": "${IDRAC_PASSWORD:-}"
+        "SERVER2_IDRAC_PASSWORD": "${SERVER2_IDRAC_PASSWORD:-}",
+        "SERVER3_IDRAC_PASSWORD": "${SERVER3_IDRAC_PASSWORD:-}"
       },
       "volumes": ["gjnet-data:/data"],
       "security_opt": ["no-new-privileges:true"],
