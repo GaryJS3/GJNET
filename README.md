@@ -30,16 +30,16 @@ Credentials are referenced by environment-variable name, never stored in invento
 
 ## Docker / Dockhand Git stack
 
-The Compose file uses JSON to avoid YAML and can be passed directly to Docker Compose:
+The Compose file contains JSON syntax (valid YAML 1.2), while keeping Dockhand's required `compose.yaml` filename:
 
 ```powershell
 Copy-Item .env.example .env
 # Edit .env privately, then:
-docker compose -f compose.json config --quiet
-docker compose -f compose.json up -d --build
+docker compose -f compose.yaml config --quiet
+docker compose -f compose.yaml up -d --build
 ```
 
-Create a Dockhand Git stack pointing at your public GitHub repository, choose `compose.json` as the compose path, supply private environment overrides, and enable Git auto-sync with rebuilding. Keep the `gjnet-data` named volume across deployments. Default binding is loopback; set `GJNET_BIND` to the Docker host's LAN address to expose it internally. Do not publish it through your WAN firewall. Use HTTPS through your internal reverse proxy for password and token traffic.
+Create a Dockhand Git stack pointing at your public GitHub repository, choose `compose.yaml` as the compose path, supply private environment overrides, and enable Git auto-sync with rebuilding. Keep the `gjnet-data` named volume across deployments. Default binding is loopback; set `GJNET_BIND` to the Docker host's LAN address to expose it internally. Do not publish it through your WAN firewall. Use HTTPS through your internal reverse proxy for password and token traffic.
 
 When proxying, set `GJNET_TRUSTED_PROXIES` to a comma-separated list of **exact proxy IP addresses**, configure the proxy to overwrite forwarded headers, and prevent direct access that bypasses it. Otherwise guest routing uses the socket's actual client IP. NAT may hide the originating subnet. This initial version accepts one forwarded hop; do not enable blanket forwarded-header trust. Docker Desktop may hide source addresses; verify guest selection from real clients after deployment.
 
