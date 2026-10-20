@@ -36,8 +36,8 @@ try {
     mock.MapGet("/api2/json/cluster/resources", (HttpContext c)=>c.Request.Headers.Authorization=="PVEAPIToken=fixture"?Results.Json(new {data=new object[]{new {id="node/pve",type="node",node="pve",status="online"},new {id="qemu/101",type="qemu",node="pve",vmid=101,name="vm-one",status="running"}}}):Results.Unauthorized());
     mock.MapGet("/redfish/v1/Systems",()=>Results.Json(new {Members=new[]{new Dictionary<string,string>{{"@odata.id","/redfish/v1/Systems/1"}}}}));
     mock.MapGet("/redfish/v1/Systems/1",()=>Results.Json(new {Id="1",Name="R730",Model="PowerEdge R730",SerialNumber="TEST",PowerState="On",Status=new {Health="OK"}}));
-    mock.MapGet("/api/environments",(HttpContext c)=>c.Request.Headers.Authorization=="Bearer fixture"?Results.Json(new[]{new {id=1,name="hawser",host="192.0.2.20"},new {id=2,name="empty",host="192.0.2.21"}}):Results.Unauthorized());
-    mock.MapGet("/api/containers",(HttpContext c)=>c.Request.Query["env"]=="1"?Results.Json(new[]{new {id="c1",name="web",image="nginx",state="running",status="Up",labels=new Dictionary<string,string>{{"com.docker.compose.project","media"}},ports=new[]{new {IP="0.0.0.0",PublicPort=8088,PrivatePort=80,Type="tcp"},new {IP="127.0.0.1",PublicPort=9090,PrivatePort=90,Type="tcp"},new {IP="0.0.0.0",PublicPort=53,PrivatePort=53,Type="udp"}}}}):Results.Json(Array.Empty<object>()));
+    mock.MapGet("/api/environments",(HttpContext c)=>c.Request.Headers.Authorization=="Bearer fixture"?Results.Json(new object[]{new {id=1,name="hawser",host="192.0.2.20"},new {id=2,name="empty",host="192.0.2.21"},new {id=3,name="edge",host="edge-agent",publicIp="192.0.2.30"},new {id=4,name="local",host=(string?)null,connectionType="socket"},new {id=5,name="unmapped edge",host="edge-agent"}}):Results.Unauthorized());
+    mock.MapGet("/api/containers",(HttpContext c)=>c.Request.Query["env"]!="2"?Results.Json(new[]{new {id="c1",name="web",image="nginx",state="running",status="Up",labels=new Dictionary<string,string>{{"com.docker.compose.project","media"}},ports=new[]{new {IP="0.0.0.0",PublicPort=8088,PrivatePort=80,Type="tcp"},new {IP="::",PublicPort=8088,PrivatePort=80,Type="tcp"},new {IP="127.0.0.1",PublicPort=9090,PrivatePort=90,Type="tcp"},new {IP="0.0.0.0",PublicPort=53,PrivatePort=53,Type="udp"}}}}):Results.Json(Array.Empty<object>()));
     mock.MapGet("/broken/api2/json/cluster/resources",()=>Results.StatusCode(503));
     await mock.StartAsync();
     s=s with {Devices=[new("manual","Manual device","windows","127.0.0.1",[port],"Local fixture")],Integrations=[new("pve","Cluster","proxmox",mockUrl,"PVE"),new("idrac","iDRAC","redfish",mockUrl,"IDRAC","reader"),new("dock","Dockhand","docker",mockUrl,"DOCKER",HostAddresses:new(){{"1","192.0.2.55"}}),new("broken","Broken","proxmox",mockUrl+"broken/","PVE")]}; store.Save(s);
@@ -45,8 +45,11 @@ try {
     Check(observations.Any(x=>x.Kind=="proxmox" && x.State=="online"),"Proxmox authenticated node reader");
     Check(observations.Any(x=>x.Kind=="vm" && x.Name=="vm-one" && x.State=="running"),"Proxmox VM reader");
     Check(observations.Any(x=>x.Kind=="hardware" && x.Details["model"]=="PowerEdge R730" && x.State=="OK"),"Redfish health and hardware reader");
-    var container=observations.Single(x=>x.Kind=="service");
+    var container=observations.Single(x=>x.Id=="dock:1:c1");
     Check(container.Links.SequenceEqual(new[]{"http://192.0.2.55:8088/"}),"Dockhand lower-case ports, host override, loopback and UDP exclusion");
+    Check(observations.Single(x=>x.Id=="dock:3:c1").Links.Contains("http://192.0.2.30:8088/"),"Hawser advertised address provides published-port links");
+    Check(observations.Single(x=>x.Id=="dock:4:c1").Links.Contains("http://127.0.0.1:8088/"),"socket host uses Dockhand server address");
+    Check(observations.Single(x=>x.Id=="dock:5:c1").Links.Count==0,"unmapped edge marker never becomes a service URL");
     Check(container.Details["stack"]=="media","Dockhand stack association");
     Check(observations.Single(x=>x.Id=="dock:env:2").State=="unknown","empty Dockhand response is unknown");
     Check(observations.Single(x=>x.Id=="broken").State=="unknown","upstream failure is unknown, not down");

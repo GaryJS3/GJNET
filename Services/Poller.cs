@@ -93,7 +93,11 @@ public class Poller(InventoryStore store, IConfiguration config, ILogger<Poller>
             var environments = await Get("api/environments");
             foreach (var env in environments.EnumerateArray())
             {
-                var envId = Text(env, "id"); var host = i.HostAddresses?.GetValueOrDefault(envId) ?? i.HostAddress ?? Text(env, "host");
+                var envId = Text(env, "id"); var host = i.HostAddresses?.GetValueOrDefault(envId) ?? i.HostAddress;
+                if (string.IsNullOrWhiteSpace(host)) host = Text(env, "publicIp");
+                if (string.IsNullOrWhiteSpace(host)) host = Text(env, "connectionType") == "socket" ? http.BaseAddress.Host : Text(env, "host");
+                // Hawser's edge-agent marker is a connection mode, not a routable hostname.
+                if (host == "edge-agent") host = "";
                 if (Uri.TryCreate(host, UriKind.Absolute, out var hostUri)) host = hostUri.Host;
                 Add("env:" + envId, Text(env, "name"), "docker-host", "unknown", host, new() { { "environment", envId }, { "note", "Reachability is represented by the container API result." } }, [i.Url]);
                 try
@@ -109,7 +113,9 @@ public class Poller(InventoryStore store, IConfiguration config, ILogger<Poller>
                             if (p.TryGetProperty("PublicPort", out var publicPort) && Text(p, "Type", "tcp") == "tcp")
                             {
                                 var bind = Text(p, "IP"); if (bind is "127.0.0.1" or "::1") continue;
-                                links.Add(Link(host, publicPort.GetInt32()));
+                                var address = !string.IsNullOrWhiteSpace(bind) && bind is not ("0.0.0.0" or "::") ? bind : host;
+                                var link = Link(address, publicPort.GetInt32());
+                                if (!links.Contains(link)) links.Add(link);
                             }
                         }
                         var stack = (r.TryGetProperty("labels", out var labels) || r.TryGetProperty("Labels", out labels)) ? Text(labels, "com.docker.compose.project") : "";

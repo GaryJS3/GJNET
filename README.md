@@ -47,7 +47,7 @@ When proxying, set `GJNET_TRUSTED_PROXIES` to a comma-separated list of **exact 
 
 `/healthz` checks app availability, not upstream integration health. After each Git deployment, verify the rebuilt container revision, persistent volume, app health, and real API observations. Container building/live deployment have not been verified in the development environment because its Docker daemon was unavailable.
 
-Configure `hostAddresses` on a Dockhand integration as an environment-ID-to-address object, for example `{"1":"192.0.2.20","2":"192.0.2.21"}`. Missing host addresses suppress port links. Loopback bindings and UDP ports are omitted. HTTP is assumed except ports 443/8006; arbitrary published TCP ports might not run a web interface. Add manual shortcuts to override protocol/path. Empty Dockhand container responses produce unknown host state because Dockhand can hide connection failures as empty arrays.
+Configure `hostAddresses` on a Dockhand integration as an environment-ID-to-address object, for example `{"1":"192.0.2.20","2":"192.0.2.21"}`. Without an override, advertised Dockhand `publicIp` values supply Hawser host addresses, and local socket environments use the Dockhand URL hostname. The `edge-agent` marker is never treated as an address. Missing host addresses suppress port links. Duplicate IPv4/IPv6 port mappings produce one link. Loopback bindings and UDP ports are omitted. HTTP is assumed except ports 443/8006; arbitrary published TCP ports might not run a web interface. Add manual shortcuts to override protocol/path. Empty Dockhand container responses produce unknown host state because Dockhand can hide connection failures as empty arrays.
 
 ## MCP
 
