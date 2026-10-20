@@ -102,8 +102,8 @@ public class ServiceDiscovery
             var strictShortcut = settings.Integrations.FirstOrDefault(i => SameEndpoint(i.Url, shortcut.Url))?.ValidateTlsCertificate ?? false;
             targets[id] = new(id, sourceId, bound?.Scope ?? old?.Scope ?? "", bound?.SourceName ?? shortcut.Section, shortcut.Name, url, sourceState, bound?.Strict ?? strictShortcut, shortcut.Id, shortcut.Url, boundId, manualOverride);
         }
-        using var permissiveHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator };
-        using var strictHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false };
+        using var permissiveHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false, ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator };
+        using var strictHandler = new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseProxy = false };
         using var permissive = new HttpClient(permissiveHandler); using var strict = new HttpClient(strictHandler);
         var next = new System.Collections.Concurrent.ConcurrentDictionary<string, DiscoveredService>();
         var probes = new System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Task<Probe>>>();
@@ -146,11 +146,21 @@ public class ServiceDiscovery
         if (!InventoryStore.WebUrl(url)) return new(false, url, "unavailable", "");
         var uri = new Uri(url);
         // A short TCP check avoids holding every sweep slot for non-HTTP/closed ports.
-        using (var tcp = new TcpClient())
         using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
         {
             timeout.CancelAfter(TimeSpan.FromMilliseconds(650));
-            try { await tcp.ConnectAsync(uri.Host, uri.Port, timeout.Token); }
+            try
+            {
+                var addresses = IPAddress.TryParse(uri.Host, out var literal) ? [literal] : await Dns.GetHostAddressesAsync(uri.Host, timeout.Token);
+                var connected = false;
+                foreach (var address in addresses.OrderBy(ip => ip.AddressFamily == AddressFamily.InterNetwork ? 0 : 1))
+                {
+                    using var tcp = new TcpClient(address.AddressFamily);
+                    try { await tcp.ConnectAsync(address, uri.Port, timeout.Token); connected = true; break; }
+                    catch (SocketException) { }
+                }
+                if (!connected) return new(false, url, "unavailable", "");
+            }
             catch (Exception e) when (e is SocketException or OperationCanceledException) { token.ThrowIfCancellationRequested(); return new(false, url, "unavailable", ""); }
         }
         var first = await Request(uri, http, token);
@@ -160,7 +170,7 @@ public class ServiceDiscovery
         var second = await Request(alternate, http, token);
         return second.Dashboard ? second : first;
     }
-    static async Task<Probe> Request(Uri uri, HttpClient http, CancellationToken token)
+    static async Task<Probe> Request(Uri uri, HttpClient http, CancellationToken token, int redirectsLeft = 2)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(TimeSpan.FromSeconds(2));
         try
@@ -176,8 +186,14 @@ public class ServiceDiscovery
             var status = (int)response.StatusCode;
             var html = response.Content.Headers.ContentType?.MediaType == "text/html" || Regex.IsMatch(body, @"<!doctype\s+html|<html\b", RegexOptions.IgnoreCase);
             var redirect = status is >= 300 and < 400 && response.Headers.Location is { } location && (!location.IsAbsoluteUri || location.Scheme is "http" or "https");
+            if (redirect && redirectsLeft > 0)
+            {
+                var destination = new Uri(uri, response.Headers.Location!);
+                if (InventoryStore.WebUrl(destination.AbsoluteUri) && destination.Host.Equals(uri.Host, StringComparison.OrdinalIgnoreCase) && destination.Query.Length == 0)
+                    return await Request(destination, http, token, redirectsLeft - 1);
+            }
             return new((status is >= 200 and < 300 && html) || (status is 401 or 403 && html) || redirect, uri.AbsoluteUri,
-                status is 401 or 403 ? "authentication required" : status is >= 200 and < 400 ? "available" : "http " + status, title);
+                status is 401 or 403 ? "authentication required" : redirect ? "redirect" : status is >= 200 and < 300 ? "available" : "http " + status, title);
         }
         catch (Exception e) when (e is HttpRequestException or IOException or OperationCanceledException)
         { token.ThrowIfCancellationRequested(); return new(false, uri.AbsoluteUri, "unavailable", ""); }

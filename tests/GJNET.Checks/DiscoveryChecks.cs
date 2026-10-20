@@ -11,30 +11,32 @@ public static class DiscoveryChecks
         var requests = 0; var leakedAuth = false; var leakedCookie = false; var redirected = 0;
         async Task<WebApplication> Server()
         {
-            var b = WebApplication.CreateBuilder(); b.Logging.ClearProviders(); b.WebHost.UseUrls("http://127.0.0.1:0");
+            var b = WebApplication.CreateBuilder(); b.Logging.ClearProviders(); b.WebHost.UseUrls("http://0.0.0.0:0");
             var app = b.Build();
             app.Use(async (context, next) => { Interlocked.Increment(ref requests); if (context.Request.Headers.Authorization.Count > 0) leakedAuth = true; if(context.Request.Headers.Cookie.Count > 0) leakedCookie = true; context.Response.Cookies.Append("fixture-session", "fixture"); await next(); });
             app.MapGet("/", () => Results.Content("<html><title>Native Fixture</title></html>", "text/html"));
             app.MapGet("/dashboard/", () => Results.Content("<html><title>Fixture Control</title><body>Dashboard</body></html>", "text/html"));
             app.MapGet("/api/", () => Results.Json(new { healthy = true }));
             app.MapGet("/login/", () => Results.Content("<html><title>Sign in</title></html>", "text/html", statusCode: 401));
-            app.MapGet("/redirect/", () => Results.Redirect("/redirect-target/"));
+            app.MapGet("/redirect/", () => Results.Redirect("https://other.example.invalid/redirect-target/"));
+            app.MapGet("/local-redirect/", () => Results.Redirect("/dashboard/"));
             app.MapGet("/redirect-target/", () => { Interlocked.Increment(ref redirected); return Results.Content("<html>Target</html>", "text/html"); });
             await app.StartAsync(); return app;
         }
         await using var first = await Server(); await using var second = await Server();
-        var url = first.Urls.Single().TrimEnd('/'); var movedUrl = second.Urls.Single().TrimEnd('/');
+        var url = first.Urls.Single().Replace("0.0.0.0","127.0.0.1").TrimEnd('/'); var movedUrl = second.Urls.Single().Replace("0.0.0.0","127.0.0.1").TrimEnd('/');
         store.Save(new([new("custom", "Custom section", "My chosen name", url + "/dashboard/", "Keep my notes")], [], [], [new("dock", "Docker", "docker", url, "")], [], new(VmPorts: [])));
         const string sourceKey = "dock:docker:1:stack:web:1";
         Observation Host(string state = "reachable") => new("dock:env:1", "Docker host", "docker-host", state, "127.0.0.1", new(), [], DateTimeOffset.UtcNow, "dock:env:1", "dock:env:1");
-        Observation Container(string address, string state = "running", string id = "container-a") => new(id, "web", "service", state, "127.0.0.1", new(), [], DateTimeOffset.UtcNow, sourceKey, "dock:env:1", [new("80/tcp", address + "/dashboard/"), new("api", address + "/api/"), new("auth", address + "/login/"), new("redirect", address + "/redirect/")]);
+        Observation Container(string address, string state = "running", string id = "container-a") => new(id, "web", "service", state, "127.0.0.1", new(), [], DateTimeOffset.UtcNow, sourceKey, "dock:env:1", [new("80/tcp", address + "/dashboard/"), new("api", address + "/api/"), new("auth", address + "/login/"), new("redirect", address + "/redirect/"),new("local-redirect",address+"/local-redirect/")]);
         var discovery = new ServiceDiscovery(store, config);
         await discovery.Refresh([Host(), Container(url)]);
         var initial = discovery.Read(); var dashboardId = sourceKey + ":80/tcp";
         check(initial.Single(s => s.Id == dashboardId).State == "available", "automatic discovery verifies HTML dashboard");
         check(initial.All(s => s.Id != sourceKey + ":api"), "JSON-only API is not promoted to a dashboard");
         check(initial.Single(s => s.Id == sourceKey + ":auth").State == "authentication required", "protected dashboard remains discoverable");
-        check(redirected == 0 && initial.Any(s => s.Id == sourceKey + ":redirect"), "redirect interfaces are recognized without following redirects");
+        check(redirected == 0 && initial.Any(s => s.Id == sourceKey + ":redirect" && s.State=="redirect"), "external redirects retain an explicit unverified redirect status");
+        check(initial.Single(s=>s.Id==sourceKey+":local-redirect").Url==url+"/dashboard/" && initial.Single(s=>s.Id==sourceKey+":local-redirect").State=="available", "same-host redirects verify the actual dashboard destination");
         check(!leakedAuth, "web discovery sends no upstream API credentials");
         var pinned = initial.Single(s => s.ShortcutId == "custom");
         check(pinned.BoundEndpoint == dashboardId && pinned.Name == "My chosen name", "existing curated shortcut binds without renaming it");
@@ -82,16 +84,16 @@ public static class DiscoveryChecks
         await native.Refresh([Vm()]);
         var nativeId=vmId+":port:"+new Uri(url).Port;
         check(native.Read().Single(s=>s.Id==nativeId).State=="available","known VM port sweep discovers a native dashboard");
-        store.Update(s=>s with {Discovery=new(VmPorts:[new Uri(url).Port],VmHosts:new(){{vmId,["localhost"]}})});
+        store.Update(s=>s with {Discovery=new(VmPorts:[new Uri(url).Port],VmHosts:new(){{vmId,["127.0.0.2"]}})});
         await native.Refresh([Vm()]);
-        check(new Uri(native.Read().Single(s=>s.Id==nativeId).Url).Host=="localhost","native dashboard follows VM host changes between full sweeps");
-        check(new Uri(native.Read().Single(s=>s.ShortcutId=="native").Url).Host=="localhost","curated native link follows VM address changes");
+        check(new Uri(native.Read().Single(s=>s.Id==nativeId).Url).Host=="127.0.0.2","native dashboard follows VM host changes between full sweeps");
+        check(new Uri(native.Read().Single(s=>s.ShortcutId=="native").Url).Host=="127.0.0.2","curated native link follows VM address changes");
         store.Update(s=>s with {Discovery=new(VmPorts:[])});
         await native.Refresh([Vm()]);
         check(native.Read().Single(s=>s.Id==nativeId).State=="unknown","missing guest address retains native dashboard as unknown");
         await native.Refresh([Vm("stopped")]);
         check(native.Read().Single(s=>s.Id==nativeId).State=="stopped","stopped VM retains native interface with stopped status");
-        store.Update(s=>s with {Discovery=new(VmPorts:[new Uri(url).Port],VmHosts:new(){{vmId,["127.0.0.1","localhost"]}})});
+        store.Update(s=>s with {Discovery=new(VmPorts:[new Uri(url).Port],VmHosts:new(){{vmId,["127.0.0.1","127.0.0.2"]}})});
         var multipleAddresses = new ServiceDiscovery(store,config);
         await multipleAddresses.Refresh([Vm()]);
         check(multipleAddresses.Read().Any(s=>s.Id==nativeId+":address:1" && s.State=="available"),"VM discovery checks secondary configured interfaces");
