@@ -59,10 +59,11 @@ public class ServiceDiscovery
             {
                 var hosts = options.VmHosts?.GetValueOrDefault(source.SourceKey!) ?? source.Details.GetValueOrDefault("addresses", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (hosts.Length == 0 && source.Kind == "docker-host" && ValidHost(source.Address)) hosts = [source.Address];
-                foreach (var host in hosts.Take(8).Where(ValidHost))
+                var candidates = hosts.Take(8).Where(ValidHost).ToArray();
+                for (var hostIndex = 0; hostIndex < candidates.Length; hostIndex++)
                     foreach (var port in options.VmPorts ?? DefaultPorts)
                     {
-                        var url = Poller.Link(host, port); var id = source.SourceKey + ":port:" + port;
+                        var url = Poller.Link(candidates[hostIndex], port); var id = source.SourceKey + ":port:" + port + (hostIndex == 0 ? "" : ":address:" + hostIndex);
                         // Published Docker ports have a stronger identity (Compose service and private port).
                         if (targets.Values.Any(t => SameEndpoint(t.Url, url)) || observations.Where(o => o.Kind == "service").Any(o => o.Links.Any(link => SameEndpoint(link, url)))) continue;
                         targets.TryAdd(id, new(id, source.SourceKey!, source.Scope ?? "", source.Name, source.Name, url, source.State, Strict(source)));
@@ -79,7 +80,9 @@ public class ServiceDiscovery
             {
                 var hosts = options.VmHosts?.GetValueOrDefault(source.SourceKey!) ?? source.Details.GetValueOrDefault("addresses", "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
                 if (hosts.Length == 0 && source.Kind == "docker-host" && ValidHost(source.Address)) hosts = [source.Address];
-                var host = hosts.Contains(new Uri(old.Url).Host) ? new Uri(old.Url).Host : hosts.FirstOrDefault(ValidHost);
+                var indexMatch = Regex.Match(endpointId, @":address:(\d+)$");
+                var addressIndex = indexMatch.Success ? int.Parse(indexMatch.Groups[1].Value) : 0;
+                var host = hosts.Contains(new Uri(old.Url).Host) ? new Uri(old.Url).Host : hosts.Where(ValidHost).ElementAtOrDefault(addressIndex);
                 var url = host is null ? old.Url : new UriBuilder(old.Url) { Host = host }.Uri.AbsoluteUri;
                 var state = source.State is "running" or "reachable" && host is null ? "unknown" : source.State;
                 targets[endpointId] = new(endpointId, old.SourceId, old.Scope, source.Name, source.Name, url, state, Strict(source));

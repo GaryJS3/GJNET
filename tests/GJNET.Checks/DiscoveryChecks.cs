@@ -91,5 +91,9 @@ public static class DiscoveryChecks
         check(native.Read().Single(s=>s.Id==nativeId).State=="unknown","missing guest address retains native dashboard as unknown");
         await native.Refresh([Vm("stopped")]);
         check(native.Read().Single(s=>s.Id==nativeId).State=="stopped","stopped VM retains native interface with stopped status");
+        store.Update(s=>s with {Discovery=new(VmPorts:[new Uri(url).Port],VmHosts:new(){{vmId,["127.0.0.1","localhost"]}})});
+        var multipleAddresses = new ServiceDiscovery(store,config);
+        await multipleAddresses.Refresh([Vm()]);
+        check(multipleAddresses.Read().Any(s=>s.Id==nativeId+":address:1" && s.State=="available"),"VM discovery checks secondary configured interfaces");
     }
 }

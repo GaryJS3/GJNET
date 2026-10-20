@@ -107,7 +107,7 @@ public class Poller(InventoryStore store, IConfiguration config, ILogger<Poller>
                         }
                         details["addresses"] = string.Join(',', addresses.Distinct());
                     }
-                    catch (Exception e) when (e is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException)
+                    catch (Exception e) when (e is HttpRequestException or JsonException or OperationCanceledException or InvalidOperationException or KeyNotFoundException)
                     { ct.ThrowIfCancellationRequested(); details["address discovery"] = "Guest network information unavailable; configure discovery.vmHosts for this VM."; }
                     enriched[vm.Id] = vm with { Details = details };
                 });

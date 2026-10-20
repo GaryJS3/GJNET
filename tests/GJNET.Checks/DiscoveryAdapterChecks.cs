@@ -12,7 +12,7 @@ public static class DiscoveryAdapterChecks
         await using var app = b.Build(); var rebuilt = false; var filePaths = new List<string>();
         app.MapGet("/", () => Results.Content("<html><title>Adapter Fixture</title></html>", "text/html"));
         app.MapGet("/api2/json/cluster/resources", () => Results.Json(new {data = new object[] {new {id="node/pve",type="node",node="pve",status="online"},new {id="qemu/101",type="qemu",node="pve",vmid=101,name="vm-fixture",status="running"}}}));
-        app.MapGet("/api2/json/nodes/pve/qemu/101/agent/network-get-interfaces", () => Results.Text("""
+        app.MapGet("/api2/json/nodes/pve/qemu/101/agent/network-get-interfaces", () => Results.Text(rebuilt ? "{}" : """
             {"data":{"result":[{"name":"ens18","ip-addresses":[{"ip-address":"192.0.2.81"}]},{"name":"docker0","ip-addresses":[{"ip-address":"172.17.0.1"}]},{"name":"lo","ip-addresses":[{"ip-address":"127.0.0.1"}]}]}}
             """, "application/json"));
         app.MapGet("/api/environments", () => Results.Json(new[] {new {id=1,name="Fixture host",host="127.0.0.1"}}));
@@ -41,6 +41,7 @@ public static class DiscoveryAdapterChecks
         rebuilt=true; await poller.Refresh();
         var replacement = poller.Read().Single(o=>o.Kind=="service" && o.Name=="web");
         check(replacement.Id!=original.Id && replacement.SourceKey==original.SourceKey, "adapter preserves service identity when Docker container ID changes");
+        check(poller.Read().Single(o=>o.Kind=="vm").State=="running" && poller.Read().Single(o=>o.Kind=="vm").Details.ContainsKey("address discovery"), "malformed guest-agent response does not break VM inventory");
         check(poller.DiscoveryError is null, "adapter discovery completes without suppressing infrastructure observations");
     }
 }
