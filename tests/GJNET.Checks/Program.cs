@@ -25,6 +25,8 @@ try {
     Check(store.Guest(IPAddress.Parse("192.0.2.1")) is null,"unmatched client fails closed");
     Check(InventoryStore.Matches(IPAddress.Parse("::ffff:10.99.0.5"),"10.99.0.0/24"),"IPv4-mapped client");
     Check(!InventoryStore.Matches(IPAddress.IPv6Loopback,"10.0.0.0/8"),"IPv6 fails closed");
+    Reject(()=>store.Save(s with {Discovery=new(VmPorts:[0])}),"invalid discovery ports rejected");
+    Reject(()=>store.Save(s with {Discovery=new(ScanIntervalSeconds:1)}),"unbounded discovery frequency rejected");
     Check(new InventoryStore(config).Read().Shortcuts.Count==2,"persistent inventory survives reload");
     Reject(()=>store.Save(s with {Shortcuts=[new("bad","x","x","javascript:alert(1)")]}),"unsafe shortcut rejected");
     Reject(()=>store.Save(s with {ScanSubnets=["10.0.0.0/16"]}),"large discovery subnet rejected");
@@ -68,6 +70,7 @@ try {
     tlsBuilder.WebHost.ConfigureKestrel(o=>o.Listen(IPAddress.Loopback,tlsPort,listener=>listener.UseHttps(certificate)));
     tlsMock=tlsBuilder.Build();
     tlsMock.MapGet("/api2/json/cluster/resources",(HttpContext c)=>c.Request.Headers.Authorization=="PVEAPIToken=fixture"?Results.Json(new {data=new[]{new {id="node/tls",type="node",node="tls",status="online"}}}):Results.Unauthorized());
+    tlsMock.MapGet("/dashboard/",()=>Results.Content("<html><title>TLS dashboard</title></html>","text/html"));
     await tlsMock.StartAsync();
     var legacyTls=JsonSerializer.Deserialize<Integration>(JsonSerializer.Serialize(new {id="tls-default",name="Default TLS",kind="proxmox",url=tlsUrl,secretEnvironmentVariable="PVE"}),InventoryStore.Json)!;
     Check(!legacyTls.ValidateTlsCertificate,"existing integration JSON defaults certificate checks off");
@@ -82,6 +85,17 @@ try {
         var rejected=false; try { await ordinaryClient.GetAsync(tlsUrl+"api2/json/cluster/resources"); } catch(HttpRequestException) {rejected=true;}
         Check(rejected,"certificate bypass remains scoped to the integration handler");
     }
+    var tlsDiscoveryPath=Path.Combine(temp,"tls-discovery"); Directory.CreateDirectory(tlsDiscoveryPath);
+    var tlsDiscoveryConfig=new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string,string?>{{"DataPath",tlsDiscoveryPath}}).Build();
+    var tlsStore=new InventoryStore(tlsDiscoveryConfig);
+    tlsStore.Save(new([],[],[],[new("tls-fixture","TLS","docker",tlsUrl,"")],[],new(VmPorts:[])));
+    var tlsDiscovery=new ServiceDiscovery(tlsStore,tlsDiscoveryConfig);
+    var tlsObservation=new Observation("tls-source","TLS app","service","running","127.0.0.1",new(),[],DateTimeOffset.UtcNow,"tls-source","tls-fixture",[new("443",tlsUrl+"dashboard/")]);
+    await tlsDiscovery.Refresh([tlsObservation]);
+    Check(tlsDiscovery.Read().Single().State=="available","dashboard discovery accepts homelab TLS certificates by default");
+    tlsStore.Update(s=>s with {Integrations=[s.Integrations.Single() with {ValidateTlsCertificate=true}]});
+    await tlsDiscovery.Refresh([tlsObservation]);
+    Check(tlsDiscovery.Read().Single().State=="unavailable","dashboard discovery honors strict certificate validation");
     await tlsMock.DisposeAsync(); tlsMock=null;
     store.Save(s with {GuestPages=[new("Local guests",["127.0.0.0/8"],["public"])],Integrations=[]});
     var appPort=FreePort(); var root=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../../"));
@@ -110,7 +124,12 @@ try {
     async Task<HttpResponseMessage> Rpc(string method,object? parameters=null,bool auth=true) {var request=new HttpRequestMessage(HttpMethod.Post,"/mcp"){Content=JsonContent.Create(new {jsonrpc="2.0",id=1,method,@params=parameters})};if(auth)request.Headers.Authorization=new("Bearer","test-mcp-token");request.Headers.Accept.ParseAdd("application/json, text/event-stream");return await http.SendAsync(request);}
     Check((await Rpc("initialize",auth:false)).StatusCode==HttpStatusCode.Unauthorized,"MCP requires separate bearer token despite owner cookie");
     var initialized=await (await Rpc("initialize")).Content.ReadFromJsonAsync<JsonElement>(); Check(initialized.GetProperty("result").GetProperty("serverInfo").GetProperty("name").GetString()=="GJNET","MCP initialization");
-    var tools=await (await Rpc("tools/list")).Content.ReadFromJsonAsync<JsonElement>();Check(tools.GetProperty("result").GetProperty("tools").GetArrayLength()==3,"MCP tool discovery");
+    var tools=await (await Rpc("tools/list")).Content.ReadFromJsonAsync<JsonElement>();Check(tools.GetProperty("result").GetProperty("tools").GetArrayLength()==4,"MCP tool discovery");
+    var configure=await (await Rpc("tools/call",new {name="configure_discovery",arguments=new {enabled=false,vmHosts=new Dictionary<string,string[]>{{"pve:qemu/101",["192.0.2.81"]}}}})).Content.ReadFromJsonAsync<JsonElement>();
+    var configured=JsonDocument.Parse(configure.GetProperty("result").GetProperty("content")[0].GetProperty("text").GetString()!).RootElement;
+    Check(configured.GetProperty("saved").GetBoolean() && File.ReadAllText(Path.Combine(temp,"inventory.json")).Contains("PRIVATE-LINK"),"MCP discovery configuration preserves other inventory");
+    var invalidDiscovery=await (await Rpc("tools/call",new {name="configure_discovery",arguments=new {vmPorts=new[]{0}}})).Content.ReadFromJsonAsync<JsonElement>();
+    Check(invalidDiscovery.GetProperty("result").GetProperty("isError").GetBoolean(),"MCP discovery settings enforce validation");
     await Rpc("tools/call",new {name="upsert_shortcut",arguments=new {id="mcp-link",section="Tools",name="Test",url="https://example.invalid/tool"}});
     var inv=await (await Rpc("tools/call",new {name="get_inventory"})).Content.ReadFromJsonAsync<JsonElement>(); Check(inv.ToString().Contains("mcp-link"),"MCP shortcut upsert persists");
     var bad=await (await Rpc("tools/call",new {name="upsert_shortcut",arguments=new {id="bad",section="Tools",name="bad",url="javascript:alert(1)"}})).Content.ReadFromJsonAsync<JsonElement>();Check(bad.GetProperty("result").GetProperty("isError").GetBoolean(),"MCP unsafe URL rejected");
@@ -118,6 +137,8 @@ try {
     var origin=new HttpRequestMessage(HttpMethod.Post,"/mcp"){Content=JsonContent.Create(new{jsonrpc="2.0",id=1,method="ping"})};origin.Headers.Authorization=new("Bearer","test-mcp-token");origin.Headers.Add("Origin","https://evil.invalid");Check((await http.SendAsync(origin)).StatusCode==HttpStatusCode.Forbidden,"MCP rejects browser Origin");
     var getMcp=new HttpRequestMessage(HttpMethod.Get,"/mcp");getMcp.Headers.Authorization=new("Bearer","test-mcp-token");
     Check((await http.SendAsync(getMcp)).StatusCode==HttpStatusCode.MethodNotAllowed,"MCP non-streaming GET returns 405");
+    await DiscoveryChecks.Run(Path.Combine(temp,"discovery"),Check);
+    await DiscoveryAdapterChecks.Run(Path.Combine(temp,"adapter-discovery"),Check);
     Console.WriteLine($"{count} checks passed.");
 } finally {
     if(process is not null) {if(!process.HasExited){process.Kill(entireProcessTree:true);await process.WaitForExitAsync();}process.Dispose();}

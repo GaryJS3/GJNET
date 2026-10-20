@@ -5,7 +5,7 @@ namespace GJNET.Services;
 
 public static class Mcp
 {
-    public static async Task<IResult> Handle(HttpContext context, IConfiguration config, InventoryStore store, Poller poller)
+    public static async Task<IResult> Handle(HttpContext context, IConfiguration config, InventoryStore store, Poller poller, ServiceDiscovery discovery)
     {
         var expected = config["McpToken"]; var supplied = context.Request.Headers.Authorization.ToString();
         if (string.IsNullOrWhiteSpace(expected) || !CryptographicOperations.FixedTimeEquals(SHA256.HashData(Encoding.UTF8.GetBytes("Bearer " + expected)), SHA256.HashData(Encoding.UTF8.GetBytes(supplied)))) return Results.Unauthorized();
@@ -32,14 +32,30 @@ public static class Mcp
                         tools = new object[]{
                     new {name="get_inventory",description="Read private inventory, shortcuts, guest routing, and current observations. No credentials are returned.",inputSchema=new {type="object",properties=new {},additionalProperties=false}},
                     new {name="upsert_shortcut",description="Add or update one shortcut. Guest visibility is unchanged. HTTP(S) links only.",inputSchema=new {type="object",properties=new {id=new {type="string"},section=new {type="string"},name=new {type="string"},url=new {type="string"},notes=new {type="string"}},required=new[]{"id","section","name","url"},additionalProperties=false}},
-                    new {name="remove_shortcut",description="Delete a shortcut and remove its guest-page references.",inputSchema=new {type="object",properties=new {id=new {type="string"}},required=new[]{"id"},additionalProperties=false}}
+                    new {name="remove_shortcut",description="Delete a shortcut and remove its guest-page references.",inputSchema=new {type="object",properties=new {id=new {type="string"}},required=new[]{"id"},additionalProperties=false}},
+                    new {name="configure_discovery",description="Update private automatic-discovery options. Omitted settings are preserved; vmHosts entries merge by source ID. Guest visibility and other inventory are unchanged.",inputSchema=new {type="object",properties=new {enabled=new {type="boolean"},scanIntervalSeconds=new {type="integer",minimum=60,maximum=86400},vmPorts=new {type="array",items=new {type="integer",minimum=1,maximum=65535},maxItems=64},vmHosts=new {type="object",additionalProperties=new {type="array",items=new {type="string"},maxItems=8}},readProxyHosts=new {type="boolean"}},additionalProperties=false}}
                 }
                     });
                 case "tools/call":
                     try
                     {
                         var p = root.GetProperty("params"); var name = Poller.Text(p, "name"); object value;
-                        if (name == "get_inventory") value = new { settings = store.Read(), observations = poller.Read(), lastPoll = poller.LastPoll };
+                        if (name == "get_inventory") value = new { settings = store.Read(), observations = poller.Read(), services = discovery.Read(), discoveryError = poller.DiscoveryError, lastPoll = poller.LastPoll };
+                        else if (name == "configure_discovery")
+                        {
+                            var args = p.GetProperty("arguments");
+                            store.Update(s =>
+                            {
+                                var d = s.Discovery ?? new();
+                                var hosts = new Dictionary<string,string[]>(d.VmHosts ?? []);
+                                if (args.TryGetProperty("vmHosts", out var suppliedHosts)) foreach (var host in suppliedHosts.EnumerateObject()) hosts[host.Name] = host.Value.EnumerateArray().Select(h => h.GetString() ?? throw new ArgumentException("Host is required")).ToArray();
+                                return s with { Discovery = new(args.TryGetProperty("enabled", out var enabled) ? enabled.GetBoolean() : d.Enabled,
+                                    args.TryGetProperty("scanIntervalSeconds", out var interval) ? interval.GetInt32() : d.ScanIntervalSeconds,
+                                    args.TryGetProperty("vmPorts", out var ports) ? ports.EnumerateArray().Select(v => v.GetInt32()).ToArray() : d.VmPorts,
+                                    hosts, args.TryGetProperty("readProxyHosts", out var proxies) ? proxies.GetBoolean() : d.ReadProxyHosts) };
+                            });
+                            value = new { saved = true, discovery = store.Read().Discovery };
+                        }
                         else
                         {
                             var args = p.GetProperty("arguments"); var shortcutId = args.GetProperty("id").GetString()!;
@@ -56,7 +72,7 @@ public static class Mcp
                         }
                         return Reply(new { content = new[] { new { type = "text", text = JsonSerializer.Serialize(value, InventoryStore.Json) } } });
                     }
-                    catch (Exception e) when (e is ArgumentException or JsonException or KeyNotFoundException or InvalidOperationException) { return Reply(new { isError = true, content = new[] { new { type = "text", text = "Invalid arguments. Supply all required fields and a valid HTTP(S) URL." } } }); }
+                    catch (Exception e) when (e is ArgumentException or JsonException or KeyNotFoundException or InvalidOperationException or FormatException or OverflowException) { return Reply(new { isError = true, content = new[] { new { type = "text", text = "Invalid arguments. Check required fields, HTTP(S) URLs, and discovery option limits." } } }); }
                 default: return Error(-32601, "Method not found");
             }
         }

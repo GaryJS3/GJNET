@@ -6,8 +6,10 @@ public record Shortcut(string Id, string Section, string Name, string Url, strin
 public record GuestPage(string Name, string[] Subnets, string[] ShortcutIds);
 public record Device(string Id, string Name, string Kind, string Address, int[] Ports, string Notes = "");
 public record Integration(string Id, string Name, string Kind, string Url, string SecretEnvironmentVariable, string Username = "", string? HostAddress = null, Dictionary<string, string>? HostAddresses = null, bool ValidateTlsCertificate = false);
-public record Settings(List<Shortcut> Shortcuts, List<GuestPage> GuestPages, List<Device> Devices, List<Integration> Integrations, List<string> ScanSubnets);
-public record Observation(string Id, string Name, string Kind, string State, string Address, Dictionary<string, string> Details, List<string> Links, DateTimeOffset CheckedAt);
+public record DiscoveryOptions(bool Enabled = true, int ScanIntervalSeconds = 300, int[]? VmPorts = null, Dictionary<string, string[]>? VmHosts = null, bool ReadProxyHosts = true);
+public record ServicePort(string Key, string Url);
+public record Settings(List<Shortcut> Shortcuts, List<GuestPage> GuestPages, List<Device> Devices, List<Integration> Integrations, List<string> ScanSubnets, DiscoveryOptions? Discovery = null);
+public record Observation(string Id, string Name, string Kind, string State, string Address, Dictionary<string, string> Details, List<string> Links, DateTimeOffset CheckedAt, string? SourceKey = null, string? Scope = null, ServicePort[]? WebPorts = null);
 public class InventoryStore
 {
     public static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
@@ -28,6 +30,7 @@ public class InventoryStore
         if (s.Integrations.Any(x => (x.HostAddress is not null && Uri.CheckHostName(x.HostAddress) == UriHostNameType.Unknown) || (x.HostAddresses?.Values.Any(h => Uri.CheckHostName(h) == UriHostNameType.Unknown) ?? false))) throw new ArgumentException("Host overrides must be hostnames or IP addresses.");
         if (s.Integrations.Any(x => !WebUrl(x.Url) || !new[] { "proxmox", "redfish", "docker" }.Contains(x.Kind))) throw new ArgumentException("Integrations support proxmox, redfish, docker and HTTP(S) URLs.");
         if (s.Integrations.Select(x => x.Id).Distinct().Count() != s.Integrations.Count || s.Devices.Select(x => x.Id).Distinct().Count() != s.Devices.Count) throw new ArgumentException("Device and integration IDs must be unique.");
+        if (s.Discovery is { } d && (d.ScanIntervalSeconds < 60 || d.ScanIntervalSeconds > 86400 || (d.VmPorts is { } ports && (ports.Length > 64 || ports.Any(p => p < 1 || p > 65535))) || (d.VmHosts?.Any(pair => pair.Value is null || pair.Value.Length > 8 || pair.Value.Any(h => Uri.CheckHostName(h) == UriHostNameType.Unknown)) ?? false))) throw new ArgumentException("Discovery needs a 60–86400 second scan interval, at most 64 valid ports, and valid VM host overrides (at most eight per VM).");
     }
     public static (uint Address, int Bits) Network(string cidr)
     {

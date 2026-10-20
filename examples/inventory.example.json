@@ -10,5 +10,6 @@
     {"id":"docker","name":"Dockhand","kind":"docker","url":"https://dockhand.example.invalid","secretEnvironmentVariable":"DOCKHAND_TOKEN"},
     {"id":"r730","name":"Dell R730","kind":"redfish","url":"https://idrac.example.invalid","username":"monitor","secretEnvironmentVariable":"IDRAC_PASSWORD","validateTlsCertificate":false}
   ],
-  "scanSubnets": []
+  "scanSubnets": [],
+  "discovery": {"enabled":true,"scanIntervalSeconds":300,"readProxyHosts":true,"vmHosts":{}}
 }

@@ -31,7 +31,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
     o.KnownProxies.Clear(); o.KnownIPNetworks.Clear();
     foreach (var proxy in (builder.Configuration["TrustedProxies"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries)) o.KnownProxies.Add(System.Net.IPAddress.Parse(proxy.Trim()));
 });
-builder.Services.AddSingleton<InventoryStore>(); builder.Services.AddSingleton<Poller>(); builder.Services.AddHostedService(p => p.GetRequiredService<Poller>());
+builder.Services.AddSingleton<InventoryStore>(); builder.Services.AddSingleton<ServiceDiscovery>(); builder.Services.AddSingleton<Poller>(); builder.Services.AddHostedService(p => p.GetRequiredService<Poller>());
 var app = builder.Build();
 if (!app.Environment.IsDevelopment()) app.UseExceptionHandler("/Error", createScopeForErrors: true);
 if (!string.IsNullOrWhiteSpace(builder.Configuration["TrustedProxies"])) app.UseForwardedHeaders();
